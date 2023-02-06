@@ -1,0 +1,106 @@
+---
+title: "Data 607 - Week2 Assignment"
+author: "Glen Dale Davis"
+date: "2023-02-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load the Required Packages
+
+Below, the required database connection and data processing packages are loaded. 
+
+```{r packages, warning=FALSE, message=FALSE}
+library(DBI)
+library(dbplyr)
+library(tidyverse)
+library(RMariaDB)
+```
+
+## Connect to the Database
+
+Below, we connect to my database of movie reviews. I collected the data via a Google Form: [https://forms.gle/sw3oTb8dZsjXaw8b7](https://forms.gle/sw3oTb8dZsjXaw8b7). Of the 13 people to whom I sent the form, 12 people responded. Two out of those 12 people hadn't seen any of the movies on the list. There was also one movie on the list that none of the respondents had seen.
+
+```{r dbconnection}
+con <- DBI::dbConnect(
+  RMariaDB::MariaDB(),
+  dbname = "movie_reviews",
+  username = "root",
+  password = as.character(read.table("pw.txt", header = FALSE)),
+  host = "127.0.0.1",
+  port = 3306,
+)
+
+```
+
+## Get Info About the Database and Read the Tables Into R
+
+Below, we get a character vector of the named tables within the database. Then we read all those named tables into R. 
+
+```{r get_db_info}
+tables <- dbListTables(con)
+print(tables)
+
+movies_db <- tbl(con, "_movies")
+directors_db <- tbl(con, "_directors")
+movies_directors_db <- tbl(con, "_movies_to__directors")
+genres_db <- tbl(con, "_genres")
+movies_genres_db <- tbl(con, "_movies_to__genres")
+reviewers_db <- tbl(con, "_reviewers")
+ratings_db <- tbl(con, "_ratings")
+
+```
+
+## Run SQL Queries to Present the Information
+
+Lastly, we run some SQL queries on the database tables to present the information in a variety of ways.
+
+First, we look at the average rating each movie received. M3GAN notably has an NA rating because no one reported having seen it. The Barbarian is the film with the best average rating (4.8), but Tár is a close second (4.75).
+
+```{r run_sql_queries1}
+ratings <- movies_db |>
+    rename(Movie_id = id) |>
+    left_join(ratings_db |> group_by(Movie_id) |>
+        summarize(Average_Rating = mean(Rating, na.rm = TRUE)),
+        by = "Movie_id") |>
+    left_join(movies_directors_db, by = "Movie_id") |>
+    left_join(directors_db |> rename(Director_id = id),
+        by = "Director_id") |>
+    collect()
+ratings <- subset(ratings, select = -Director_id)
+as_tibble(ratings)
+
+```
+
+Next, we look at the movies by genre.
+
+```{r run_sql_queries2}
+genres <- genres_db |>
+    rename(Genre_id = id) |>
+    left_join(movies_genres_db, by = "Genre_id") |>
+    left_join(movies_db |> rename(Movie_id = id), by = "Movie_id") |>
+    collect()
+genres <- subset(genres, select = -c(Movie_id, Released, Length_Minutes))
+as_tibble(genres)
+
+```
+
+Lastly, we look at the movies each reviewer saw and rated. Notably, neither Alex nor Grifin saw any of the movies on the list. (They are married with two small children, so this is not terribly surprising.)
+
+```{r run_sql_queries3, warning=FALSE}
+reviewers <- reviewers_db |>
+    rename(Reviewer_id = id) |>
+    left_join(ratings_db |> filter(!is.null(Rating)) |>
+        arrange(Reviewer_id), by = "Reviewer_id") |>
+    left_join(movies_db |> rename(Movie_id = id), by = "Movie_id") |>
+    collect()
+Rating <- reviewers$Rating
+reviewers <- subset(reviewers, select = -c(Movie_id, Rating, Released,
+    Length_Minutes))
+reviewers <- cbind(reviewers, Rating)
+print(as_tibble(reviewers), n = Inf)
+
+```
